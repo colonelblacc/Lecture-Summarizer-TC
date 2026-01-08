@@ -1,3 +1,24 @@
-__pycache__/
-*.txt
+# Environments
+venv/
+env/
 .env
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# Logs
+*.log
+
+# Application Data/Outputs
+*.wav
+audio_chunks/
+summaries/
+transcripts/
+lecture.txt
+lecture_clean.txt
+recording.wav
+
+# System
+.DS_Store
