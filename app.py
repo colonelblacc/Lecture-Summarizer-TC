@@ -9,8 +9,46 @@ import scipy.io.wavfile as wav
 from batch_processor import BatchProcessor
 
 # Page Config
-st.set_page_config(page_title="Lecture Summarizer (Batch)", page_icon="🎙️")
-st.title("🎙️ Robust Lecture Summarizer")
+# Page Config
+st.set_page_config(page_title="Lecture Summarizer", page_icon="🎙️", layout="wide")
+
+# Custom CSS
+st.markdown("""
+<style>
+    .main {
+        background-color: #f8f9fa;
+        font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    }
+    .stButton>button {
+        width: 100%;
+        border-radius: 8px;
+        height: 3em;
+        font-weight: bold;
+    }
+    .stDownloadButton>button {
+        width: 100%;
+        border-radius: 8px;
+    }
+    h1 {
+        color: #2c3e50;
+        text-align: center;
+        padding-bottom: 20px;
+    }
+    h2, h3 {
+        color: #34495e;
+    }
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+    }
+    .css-1y4p8pa {
+        padding: 2rem 1rem;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+st.title("🎙️ AI Lecture Summarizer")
+st.markdown("---")
 
 # Constants
 RECORDING_FILE = "recording.wav"
@@ -150,86 +188,73 @@ def stop_recording_subprocess():
         st.error(f"Error stopping: {e}")
 
 # UI Layout
+main_cols = st.columns([1, 1], gap="large")
 
-# 1. Capture Audio
-st.header("1. Capture Audio")
-
-# File Upload Option
-uploaded_file = st.file_uploader("Upload an existing audio file (WAV/MP3)", type=["wav", "mp3"])
-
-if uploaded_file is not None:
-    # Save the uploaded file to the target path
-    with open(RECORDING_FILE, "wb") as f:
-        f.write(uploaded_file.getbuffer())
-    
-    # Auto-start only if new file
-    if st.session_state.last_processed_file != uploaded_file.name:
-        st.session_state.last_processed_file = uploaded_file.name
-        start_pipeline()
+with main_cols[0]:
+    with st.container(border=True):
+        st.header("1. Capture Audio")
         
-    st.success(f"File uploaded! Processing started...")
-
-st.subheader("OR Record a new one")
-
-col1, col2 = st.columns(2)
-
-# Important: Streamlit re-runs scripts. We need a persistent stream. 
-# Robust recording in Streamlit often requires a specific component or a simple "start/stop" that blocks (not ideal) 
-# or using a background thread.
-# For simplicity in this plan: We will use a Blocking Record for fixed duration OR a toggle that relies on re-runs.
-# Re-run based recording is flaky.
-# Let's use a meaningful "Record for X seconds" or "Start/Stop" that writes to a buffer.
-# Actually, the simplest reliable way in Streamlit without custom components is to use an external recorder or `audio_recorder_streamlit`.
-# But we can't install new UI components easily.
-# We will trust the user to use the buttons. 
-# We'll use a globally defined stream if possible, but Streamlit clears module variables on reload sometimes? No, cache helps.
-# Let's try a simple approach: "Start" launches a thread that records until "Stop" sets a flag.
-
-if st.button("🔴 Start Recording", disabled=st.session_state.recording):
-    start_recording_subprocess()
-    st.rerun()
-
-if st.button("⏹️ Stop Recording", disabled=not st.session_state.recording):
-    stop_recording_subprocess()
-    st.rerun()
-
-if st.session_state.recording:
-    st.error("Recording... (Press Stop to finish)")
-
-# 2. Processing Section
-st.header("2. Process Batch")
-
-if os.path.exists(RECORDING_FILE):
-    st.info(f"Audio file ready: {RECORDING_FILE}")
-    
-    with open(RECORDING_FILE, "rb") as f:
-         st.download_button("💾 Download Recording", f, file_name="recording.wav")
-    
-    # Auto-processing is now active. 
-    # Showing valid status below.
-
-# 3. Status & Results
-# Check if processor is running via its internal flag (reliable across threads)
-is_running = st.session_state.processor.is_running
-if is_running:
-    st.warning("Pipeline is running... Please wait.")
-    update_status()
-    time.sleep(1) # Auto-refresh
-    st.rerun()
-else:
-    update_status()
-    if st.session_state.processing_active and not is_running:
-         st.session_state.processing_active = False # Sync state when done
-
-st.header("3. Notes")
-if os.path.exists(FINAL_NOTES_FILE):
-    with open(FINAL_NOTES_FILE, "r", encoding="utf-8") as f:
-        notes_content = f.read()
-        st.markdown(notes_content)
+        tab1, tab2 = st.tabs(["📁 Upload File", "🎤 Live Record"])
         
-    st.download_button(
-        label="📥 Download Notes",
-        data=notes_content,
-        file_name="lecture_notes.txt",
-        mime="text/plain"
-    )
+        with tab1:
+            uploaded_file = st.file_uploader("Upload Audio (WAV/MP3)", type=["wav", "mp3"])
+            if uploaded_file is not None:
+                with open(RECORDING_FILE, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
+                
+                # Auto-start check
+                if st.session_state.last_processed_file != uploaded_file.name:
+                    st.session_state.last_processed_file = uploaded_file.name
+                    start_pipeline()
+                st.success(f"File uploaded! Processing...")
+
+        with tab2:
+            col_rec1, col_rec2 = st.columns(2)
+            with col_rec1:
+                if st.button("🔴 Start", disabled=st.session_state.recording):
+                    start_recording_subprocess()
+                    st.rerun()
+            with col_rec2:
+                if st.button("⏹️ Stop", disabled=not st.session_state.recording):
+                    stop_recording_subprocess()
+                    st.rerun()
+            
+            if st.session_state.recording:
+                st.error("Recording in progress...")
+
+    # Status Section inside Left Column
+    with st.container(border=True):
+        st.header("System Status")
+        is_running = st.session_state.processor.is_running
+        
+        if is_running:
+            st.warning("Pipeline Active")
+            update_status()
+            time.sleep(1)
+            st.rerun()
+        else:
+            update_status()
+            if st.session_state.processing_active and not is_running:
+                st.session_state.processing_active = False # Sync
+        
+        if os.path.exists(RECORDING_FILE):
+             st.markdown("### Raw Audio")
+             with open(RECORDING_FILE, "rb") as f:
+                  st.download_button("💾 Download .wav", f, file_name="recording.wav")
+
+with main_cols[1]:
+    with st.container(border=True):
+        st.header("📝 Lecture Notes")
+        if os.path.exists(FINAL_NOTES_FILE):
+            with open(FINAL_NOTES_FILE, "r", encoding="utf-8") as f:
+                notes_content = f.read()
+            st.markdown(notes_content)
+            st.markdown("---")
+            st.download_button(
+                label="📥 Download Notes",
+                data=notes_content,
+                file_name="lecture_notes.txt",
+                mime="text/plain"
+            )
+        else:
+            st.info("Notes will appear here after processing.")
