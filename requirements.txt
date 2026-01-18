@@ -1,0 +1,8 @@
+streamlit>=1.30.0
+RealtimeSTT>=0.1.15
+torch>=2.0.0
+sounddevice>=0.4.6
+pydub>=0.25.1
+faster-whisper>=0.10.0
+scipy>=1.11.0
+numpy>=1.24.0
