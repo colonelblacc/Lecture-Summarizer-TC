@@ -16,9 +16,12 @@ __pycache__/
 audio_chunks/
 summaries/
 transcripts/
+notes/
 lecture.txt
 lecture_clean.txt
 recording.wav
+recording_norm.wav
+final_notes.txt
 
 # System
 .DS_Store

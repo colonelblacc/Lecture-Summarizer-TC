@@ -1,5 +1,6 @@
 import streamlit as st
 import os
+import sys
 import threading
 import time
 import sounddevice as sd
@@ -13,7 +14,8 @@ st.title("🎙️ Robust Lecture Summarizer")
 
 # Constants
 RECORDING_FILE = "recording.wav"
-FINAL_NOTES_FILE = "final_notes.txt"
+NOTES_DIR = "notes"
+FINAL_NOTES_FILE = os.path.join(NOTES_DIR, "final_notes.txt")
 
 # Session State
 if 'recording' not in st.session_state:
@@ -24,6 +26,8 @@ if 'recording_data' not in st.session_state:
     st.session_state.recording_data = []
 if 'processing_active' not in st.session_state:
     st.session_state.processing_active = False
+if 'last_processed_file' not in st.session_state:
+    st.session_state.last_processed_file = None
 
 # Sidebar
 st.sidebar.header("Settings")
@@ -31,7 +35,18 @@ st.sidebar.header("Settings")
 # Microphone Selection
 devices = sd.query_devices()
 input_devices = [f"{d['index']}: {d['name']}" for d in devices if d['max_input_channels'] > 0]
-selected_device_str = st.sidebar.selectbox("Select Microphone", input_devices, index=0)
+
+# Try to find default device index
+default_device_index = sd.default.device[0]
+default_option_index = 0
+
+# Find where the default device is in our list
+for i, dev_str in enumerate(input_devices):
+    if dev_str.startswith(f"{default_device_index}:"):
+        default_option_index = i
+        break
+
+selected_device_str = st.sidebar.selectbox("Select Microphone", input_devices, index=default_option_index)
 selected_device_index = int(selected_device_str.split(":")[0])
 
 st.sidebar.header("Status")
@@ -83,6 +98,29 @@ def start_recording_subprocess():
     except Exception as e:
         st.error(f"Failed to start recorder: {e}")
 
+def run_pipeline_thread(processor_instance):
+    try:
+        # Cleanup old run data before starting new one
+        processor_instance.cleanup_artifacts()
+        
+        success_stt = processor_instance.process_audio_batches(RECORDING_FILE)
+        if success_stt:
+             processor_instance.process_summary_batches()
+    except Exception as e:
+         processor_instance.status_message = f"Error: {e}"
+    finally:
+         processor_instance.is_running = False
+
+def start_pipeline():
+    if st.session_state.processing_active or st.session_state.processor.is_running:
+        return
+
+    st.session_state.processing_active = True
+    proc = st.session_state.processor
+    proc.is_running = True
+    
+    t = threading.Thread(target=run_pipeline_thread, args=(proc,))
+    t.start()
 def stop_recording_subprocess():
     pid = st.session_state.recorder_pid
     if pid is None:
@@ -100,6 +138,7 @@ def stop_recording_subprocess():
         
         if os.path.exists(RECORDING_FILE):
              st.success(f"Saved to {RECORDING_FILE}")
+             start_pipeline()
         else:
              st.error("Recording file not found after stop.")
 
@@ -122,7 +161,13 @@ if uploaded_file is not None:
     # Save the uploaded file to the target path
     with open(RECORDING_FILE, "wb") as f:
         f.write(uploaded_file.getbuffer())
-    st.success(f"File uploaded! Ready to process.")
+    
+    # Auto-start only if new file
+    if st.session_state.last_processed_file != uploaded_file.name:
+        st.session_state.last_processed_file = uploaded_file.name
+        start_pipeline()
+        
+    st.success(f"File uploaded! Processing started...")
 
 st.subheader("OR Record a new one")
 
@@ -157,29 +202,12 @@ st.header("2. Process Batch")
 if os.path.exists(RECORDING_FILE):
     st.info(f"Audio file ready: {RECORDING_FILE}")
     
-    if st.button("🚀 Start Batch Processing", disabled=st.session_state.processing_active):
-        st.session_state.processing_active = True
-        
-        # Prepare the processor
-        proc = st.session_state.processor
-        proc.is_running = True
-        st.session_state.processing_active = True
-        
-        def run_pipeline(processor_instance):
-            try:
-                success_stt = processor_instance.process_audio_batches(RECORDING_FILE)
-                if success_stt:
-                    processor_instance.process_summary_batches()
-            except Exception as e:
-                processor_instance.status_message = f"Error: {e}"
-            finally:
-                processor_instance.is_running = False
+    with open(RECORDING_FILE, "rb") as f:
+         st.download_button("💾 Download Recording", f, file_name="recording.wav")
+    
+    # Auto-processing is now active. 
+    # Showing valid status below.
 
-        t = threading.Thread(target=run_pipeline, args=(proc,))
-        t.start()
-        st.rerun()
-
-# 3. Status & Results
 # 3. Status & Results
 # Check if processor is running via its internal flag (reliable across threads)
 is_running = st.session_state.processor.is_running
@@ -196,4 +224,12 @@ else:
 st.header("3. Notes")
 if os.path.exists(FINAL_NOTES_FILE):
     with open(FINAL_NOTES_FILE, "r", encoding="utf-8") as f:
-        st.markdown(f.read())
+        notes_content = f.read()
+        st.markdown(notes_content)
+        
+    st.download_button(
+        label="📥 Download Notes",
+        data=notes_content,
+        file_name="lecture_notes.txt",
+        mime="text/plain"
+    )

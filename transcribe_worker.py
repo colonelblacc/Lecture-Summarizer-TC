@@ -19,8 +19,9 @@ def transcribe(file_path):
         print(f"Error loading model: {e}")
         sys.exit(1)
 
-        # Force English. 
-        # DISABLED VAD filter because it was cutting off parts of the audio in short clips.
+    # Force English. 
+    # DISABLED VAD filter because it was cutting off parts of the audio in short clips.
+    try:
         segments, info = model.transcribe(
             file_path, 
             beam_size=10, 

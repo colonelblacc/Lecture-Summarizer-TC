@@ -1,14 +1,17 @@
 import os
 import json
+import sys
 import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from audio_chunker import AudioChunker
+from pydub import AudioSegment, effects
 
 # Constants
 TRANSCRIPT_DIR = "transcripts"
 SUMMARY_DIR = "summaries"
-FINAL_NOTES_FILE = "final_notes.txt"
+NOTES_DIR = "notes"
+FINAL_NOTES_FILE = os.path.join(NOTES_DIR, "final_notes.txt")
 LECTURE_CLEAN_FILE = "lecture_clean.txt"
 
 class BatchProcessor:
@@ -22,9 +25,37 @@ class BatchProcessor:
         self._stop_event = threading.Event()
 
     def _ensure_dirs(self):
-        for d in [TRANSCRIPT_DIR, SUMMARY_DIR]:
+        for d in [TRANSCRIPT_DIR, SUMMARY_DIR, NOTES_DIR]:
             if not os.path.exists(d):
                 os.makedirs(d)
+
+    def cleanup_artifacts(self):
+        """Removes old files from output directories."""
+        self.status_message = "Cleaning previous artifacts..."
+        
+        # Determine directories to clean. Note: 'audio_chunks' is created by chunker, 
+        # so we should check if AudioChunker exposes dir or valid path.
+        # Assuming AudioChunker uses "audio_chunks" by default or we can clean it hardcoded.
+        dirs_to_clean = [TRANSCRIPT_DIR, SUMMARY_DIR, NOTES_DIR, "audio_chunks"]
+        
+        for d in dirs_to_clean:
+            if os.path.exists(d):
+                for f in os.listdir(d):
+                    # Keep .gitignore or other config files if any, but usually safe to nuke all txt/wav
+                    file_path = os.path.join(d, f)
+                    try:
+                        if os.path.isfile(file_path):
+                            os.remove(file_path)
+                    except Exception as e:
+                        print(f"Failed to delete {file_path}: {e}")
+        
+        # Also clean intermediate files
+        for f in [LECTURE_CLEAN_FILE]:
+            if os.path.exists(f):
+                try:
+                    os.remove(f)
+                except:
+                    pass
 
     def process_audio_batches(self, audio_file_path):
         """
@@ -33,8 +64,25 @@ class BatchProcessor:
         self.status_message = "Chunking audio..."
         self.transcription_progress = 0.1
         
+        # 1. Normalize Audio first
+        self.status_message = "Normalizing audio..."
+        try:
+            raw_audio = AudioSegment.from_file(audio_file_path)
+            normalized_audio = effects.normalize(raw_audio)
+            
+            # Overwrite or save as temp? Overwrite is simpler for this flow
+            # but let's be safe and save to a temp normalized file if we want to preserve original.
+            # actually, let's just use the normalized audio for chunking.
+            # AudioChunker takes a path. So we save it.
+            normalized_path = audio_file_path.replace(".wav", "_norm.wav")
+            normalized_audio.export(normalized_path, format="wav")
+            audio_for_chunking = normalized_path
+        except Exception as e:
+            print(f"Normalization failed: {e}")
+            audio_for_chunking = audio_file_path # Fallback
+
         # 1. Chunk Audio
-        chunks = self.chunker.split_audio(audio_file_path)
+        chunks = self.chunker.split_audio(audio_for_chunking)
         if not chunks:
             self.status_message = "Audio chunking failed."
             return False
@@ -102,13 +150,13 @@ class BatchProcessor:
         # Since I cannot easily verify `faster_whisper` API right now, 
         # I will create a temporary helper script `transcribe_worker.py` that takes a file and outputs text.
         
-        cmd = ["python3", "transcribe_worker.py", file_path]
+        cmd = [sys.executable, "transcribe_worker.py", file_path]
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8')
             if result.returncode == 0:
                 return result.stdout.strip()
             else:
-                print(f"Transcription failed for {file_path}: {result.stderr}")
+                print(f"Transcription failed for {file_path}: {result.stderr} | Output: {result.stdout}")
                 return ""
         except Exception as e:
             print(f"Transcribe worker error: {e}")
